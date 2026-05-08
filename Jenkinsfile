@@ -1,14 +1,13 @@
 @Library('Shared') _
 pipeline {
-    agent none
+    agent { label 'docker-agent' } // Defined once for the whole pipeline
 
     parameters {
-        string(name: 'IMAGE_TAG', defaultValue: '', description: 'Docker image tag')
+        string(name: 'IMAGE_TAG', defaultValue: 'v1.0.0', description: 'Docker image tag')
     }
     
     stages {
         stage("Validate Parameters") {
-            agent any
             steps {
                 script {
                     if (!params.IMAGE_TAG?.trim()) {
@@ -20,26 +19,23 @@ pipeline {
         }
 
         stage("Workspace Cleanup") {
-            agent any
             steps {
                 cleanWs()
             }
         }
 
         stage("Git Checkout") {
-            agent any
             steps {
                 script {
-                    clone("https://github.com/sachitrrazdan1710/java-pipeline.git", "devops")
+                    // Bypass the buggy Git Plugin by using raw shell commands
+                    sh "rm -rf *" 
+                    sh "git clone -b main https://github.com/sachitrrazdan1710/java-pipeline.git ."
                 }
-                stash name: 'source-code', includes: '**/*'
             }
         }
 
         stage("Trivy: Filesystem Scan") {
-            agent { label 'docker-agent' }
             steps {
-                unstash 'source-code'
                 script {
                     trivy_scan()
                 }
@@ -47,19 +43,13 @@ pipeline {
         }
 
         stage("Maven Build") {
-            agent any
             steps {
-                unstash 'source-code'
                 sh 'mvn clean package'
-                stash name: 'build-artifact', includes: 'webapp/target/webapp.war'
             }
         }
 
         stage("Docker Build") {
-            agent { label 'docker-agent' }
             steps {
-                unstash 'source-code'
-                unstash 'build-artifact'
                 script {
                     sh 'cp webapp/target/webapp.war .'
                     docker_build(
@@ -72,7 +62,6 @@ pipeline {
         }
 
         stage("Trivy: Image Scan") {
-            agent { label 'docker-agent' }
             steps {
                 script {
                     sh "trivy image --severity HIGH,CRITICAL sachitrrazdan1710/regapp:${params.IMAGE_TAG}"
@@ -81,7 +70,6 @@ pipeline {
         }
 
         stage("Docker: Push to DockerHub") {
-            agent { label 'docker-agent' }
             steps {
                 script {
                     docker_push(
@@ -101,7 +89,7 @@ pipeline {
             ]
         }
         failure {
-            echo "CI Pipeline Failed. ServiceNow integration is currently disabled for this branch."
+            echo "CI Pipeline Failed."
         }
     }
 }
