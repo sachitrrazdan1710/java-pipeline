@@ -1,0 +1,96 @@
+@Library('Shared') _
+pipeline {
+    agent any
+
+    parameters {
+        string(name: 'IMAGE_TAG', defaultValue: '', description: 'Docker tag passed from CI job')
+    }
+
+    environment {
+        DOCKER_IMAGE_NAME = 'sachitrrazdan1710/regapp'
+        K8S_DEPLOYMENT_FILE = 'kubernetes/regapp-deploy.yml'
+        K8S_SERVICE_FILE = 'kubernetes/regapp-service.yml'
+    }
+
+    stages {
+        stage("Validate Parameters") {
+            steps {
+                script {
+                    if (!params.IMAGE_TAG?.trim()) {
+                        error("IMAGE_TAG must be provided.")
+                    }
+                    echo "Deploying Version: ${params.IMAGE_TAG}"
+                }
+            }
+        }
+
+        stage("Workspace Cleanup") {
+            steps {
+                cleanWs()
+            }
+        }
+
+        stage('Git: Code Checkout') {
+            steps {
+                script {
+                    clone("https://github.com/sachitrrazdan1710/java-pipeline.git", "devops")
+                }
+            }
+        }
+
+        stage("Update Kubernetes Manifests") {
+            steps {
+                script {
+                    sh """
+                    sed -i 's|image: .*regapp:.*|image: ${env.DOCKER_IMAGE_NAME}:${params.IMAGE_TAG}|' ${env.K8S_DEPLOYMENT_FILE}
+
+                    echo "Updated ${env.K8S_DEPLOYMENT_FILE}:"
+                    grep 'image:' ${env.K8S_DEPLOYMENT_FILE} || true
+                    """
+                }
+            }
+        }
+
+        stage("Git: Commit and Push Manifest Changes") {
+            steps {
+                script {
+                    withCredentials([gitUsernamePassword(credentialsId: 'Github-cred', gitToolName: 'Default')]) {
+                        sh """
+                        git config user.name "Jenkins CD Bot"
+                        git config user.email "jenkins@local"
+
+                        git add ${env.K8S_DEPLOYMENT_FILE}
+                        git commit -m "GitOps: Update image to ${params.IMAGE_TAG} [skip ci]" || echo "No changes to commit"
+                        git push origin devops
+                        """
+                    }
+                }
+            }
+        }
+
+        stage('Deploy to Kubernetes') {
+            steps {
+                script {
+                    echo "Applying manifests to cluster..."
+                    sh "kubectl apply -f ${env.K8S_DEPLOYMENT_FILE}"
+                    sh "kubectl apply -f ${env.K8S_SERVICE_FILE}"
+                }
+            }
+        }
+    }
+
+    post {
+        success {
+            emailext attachLog: true,
+            subject: "RegApp Deployment SUCCESS - ${env.JOB_NAME}",
+            body: "Deployment of version ${params.IMAGE_TAG} successful on branch devops.",
+            to: 'sachitrrazdan399@gmail.com'
+        }
+        failure {
+            emailext attachLog: true,
+            subject: "RegApp Deployment FAILED - ${env.JOB_NAME}",
+            body: "Deployment failed. Check Jenkins logs.",
+            to: 'sachitrrazdan399@gmail.com'
+        }
+    }
+}
