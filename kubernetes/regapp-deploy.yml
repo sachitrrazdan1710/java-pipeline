@@ -21,7 +21,7 @@ spec:
     spec:
       containers:
       - name: regapp
-        image: sachitrrazdan1710/regapp:v1.0.1
+        image: sachitrrazdan1710/regapp:v1.0
         imagePullPolicy: Always
 
         ports:
